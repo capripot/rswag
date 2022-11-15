@@ -19,7 +19,7 @@ module Rswag
           add_verb(request, metadata)
           add_path(request, metadata, swagger_doc, parameters, example)
           add_headers(request, metadata, swagger_doc, parameters, example)
-          add_payload(request, parameters, example)
+          add_payload(request, metadata, parameters, example)
         end
       end
 
@@ -49,17 +49,7 @@ module Rswag
       end
 
       def security_version(scheme_names, swagger_doc)
-        if doc_version(swagger_doc).start_with?('2')
-          (swagger_doc[:securityDefinitions] || {}).slice(*scheme_names).values
-        else # Openapi3
-          if swagger_doc.key?(:securityDefinitions)
-            ActiveSupport::Deprecation.warn('Rswag::Specs: WARNING: securityDefinitions is replaced in OpenAPI3! Rename to components/securitySchemes (in swagger_helper.rb)')
-            swagger_doc[:components] ||= { securitySchemes: swagger_doc[:securityDefinitions] }
-            swagger_doc.delete(:securityDefinitions)
-          end
-          components = swagger_doc[:components] || {}
-          (components[:securitySchemes] || {}).slice(*scheme_names).values
-        end
+        (swagger_doc[:securityDefinitions] || {}).slice(*scheme_names).values
       end
 
       def resolve_parameter(ref, swagger_doc)
@@ -71,58 +61,21 @@ module Rswag
       end
 
       def key_version(ref, swagger_doc)
-        if doc_version(swagger_doc).start_with?('2')
-          ref.sub('#/parameters/', '').to_sym
-        else # Openapi3
-          if ref.start_with?('#/parameters/')
-            ActiveSupport::Deprecation.warn('Rswag::Specs: WARNING: #/parameters/ refs are replaced in OpenAPI3! Rename to #/components/parameters/')
-            ref.sub('#/parameters/', '').to_sym
-          else
-            ref.sub('#/components/parameters/', '').to_sym
-          end
-        end
+        ref.sub('#/parameters/', '').to_sym
       end
 
       def definition_version(swagger_doc)
-        if doc_version(swagger_doc).start_with?('2')
-          swagger_doc[:parameters]
-        else # Openapi3
-          if swagger_doc.key?(:parameters)
-            ActiveSupport::Deprecation.warn('Rswag::Specs: WARNING: parameters is replaced in OpenAPI3! Rename to components/parameters (in swagger_helper.rb)')
-            swagger_doc[:parameters]
-          else
-            components = swagger_doc[:components] || {}
-            components[:parameters]
-          end
-        end
+        swagger_doc[:parameters]
       end
 
       def add_verb(request, metadata)
         request[:verb] = metadata[:operation][:verb]
       end
 
-      def base_path_from_servers(swagger_doc, use_server = :default)
-        return '' if swagger_doc[:servers].nil? || swagger_doc[:servers].empty?
-        server = swagger_doc[:servers].first
-        variables = {}
-        server.fetch(:variables, {}).each_pair { |k,v| variables[k] = v[use_server] }
-        base_path = server[:url].gsub(/\{(.*?)\}/) { |name| variables[name.to_sym] }
-        URI(base_path).path
-      end
-
       def add_path(request, metadata, swagger_doc, parameters, example)
-        open_api_3_doc = doc_version(swagger_doc).start_with?('3')
-        uses_base_path = swagger_doc[:basePath].present?
+        return unless swagger_doc[:basePath].present?
 
-        if open_api_3_doc && uses_base_path
-          ActiveSupport::Deprecation.warn('Rswag::Specs: WARNING: basePath is replaced in OpenAPI3! Update your swagger_helper.rb')
-        end
-
-        if uses_base_path
-          template = (swagger_doc[:basePath] || '') + metadata[:path_item][:template]
-        else # OpenAPI 3
-          template = base_path_from_servers(swagger_doc) + metadata[:path_item][:template]
-        end
+        template = (swagger_doc[:basePath] || '') + metadata[:path_item][:template]
 
         request[:path] = template.tap do |path_template|
           parameters.select { |p| p[:in] == :path }.each do |p|
@@ -143,40 +96,6 @@ module Rswag
       def build_query_string_part(param, value, swagger_doc)
         name = param[:name]
 
-        # OAS 3: https://swagger.io/docs/specification/serialization/
-        if swagger_doc && doc_version(swagger_doc).start_with?('3') && param[:schema]
-          style = param[:style]&.to_sym || :form
-          explode = param[:explode].nil? ? true : param[:explode]
-
-          case param[:schema][:type]&.to_sym
-          when :object
-            case style
-            when :deepObject
-              return { name => value }.to_query
-            when :form
-              if explode
-                return value.to_query
-              else
-                return "#{CGI.escape(name.to_s)}=" + value.to_a.flatten.map{|v| CGI.escape(v.to_s) }.join(',')
-              end
-            end
-          when :array
-            case explode
-            when true
-              return value.to_a.flatten.map{|v| "#{CGI.escape(name.to_s)}=#{CGI.escape(v.to_s)}"}.join('&')
-            else
-              separator = case style
-                          when :form then ','
-                          when :spaceDelimited then '%20'
-                          when :pipeDelimited then '|'
-                          end
-              return "#{CGI.escape(name.to_s)}=" + value.to_a.flatten.map{|v| CGI.escape(v.to_s) }.join(separator)
-            end
-          else
-            return "#{name}=#{value}"
-          end
-        end
-
         type = param[:type] || param.dig(:schema, :type)
         return "#{name}=#{value}" unless type&.to_sym == :array
 
@@ -194,6 +113,10 @@ module Rswag
         end
       end
 
+      def main_media_type(metadata, swagger_doc)
+        (metadata[:operation][:consumes] || swagger_doc[:consumes])&.first
+      end
+
       def add_headers(request, metadata, swagger_doc, parameters, example)
         tuples = parameters
           .select { |p| p[:in] == :header }
@@ -207,11 +130,13 @@ module Rswag
         end
 
         # Content-Type header
-        consumes = metadata[:operation][:consumes] || swagger_doc[:consumes]
-        if consumes
-          content_type = example.respond_to?(:'Content-Type') ? example.send(:'Content-Type') : consumes.first
-          tuples << ['Content-Type', content_type]
+        content_type = if  example.respond_to?(:'Content-Type')
+          example.send(:'Content-Type')
+        else
+          main_media_type(metadata, swagger_doc)
         end
+
+        tuples << ['Content-Type', content_type] if content_type
 
         # Host header
         host = metadata[:operation][:host] || swagger_doc[:host]
@@ -237,18 +162,18 @@ module Rswag
         request[:headers] = Hash[rack_formatted_tuples]
       end
 
-      def add_payload(request, parameters, example)
+      def add_payload(request, metadata, parameters, example)
         content_type = request[:headers]['CONTENT_TYPE']
         return if content_type.nil?
 
         if ['application/x-www-form-urlencoded', 'multipart/form-data'].include?(content_type)
-          request[:payload] = build_form_payload(parameters, example)
+          request[:payload] = build_form_payload(metadata, parameters, example)
         else
-          request[:payload] = build_json_payload(parameters, example)
+          request[:payload] = build_json_payload(metadata, parameters, example)
         end
       end
 
-      def build_form_payload(parameters, example)
+      def build_form_payload(_metadata, parameters, example)
         # See http://seejohncode.com/2012/04/29/quick-tip-testing-multipart-uploads-with-rspec/
         # Rather that serializing with the appropriate encoding (e.g. multipart/form-data),
         # Rails test infrastructure allows us to send the values directly as a hash
@@ -259,7 +184,7 @@ module Rswag
         Hash[tuples]
       end
 
-      def build_json_payload(parameters, example)
+      def build_json_payload(_metadata, parameters, example)
         body_param = parameters.select { |p| p[:in] == :body }.first
 
         return nil unless body_param
@@ -267,10 +192,6 @@ module Rswag
         raise(MissingParameterError, body_param[:name]) unless example.respond_to?(body_param[:name])
 
         example.send(body_param[:name]).to_json
-      end
-
-      def doc_version(doc)
-        doc[:openapi] || doc[:swagger] || '3'
       end
     end
 

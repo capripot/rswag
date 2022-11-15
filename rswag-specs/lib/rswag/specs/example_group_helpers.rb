@@ -115,6 +115,19 @@ module Rswag
         )
       end
 
+      # Supports https://swagger.io/docs/specification/describing-request-body/
+      def request_body_form(attributes)
+        if schema = attributes.delete(:schema)
+          attributes[:content] = {
+            "application/x-www-form-urlencoded" => {
+              schema: schema
+            }
+          }
+        end
+        attributes[:required] = schema[:required]&.any?
+        metadata[:request_body] = attributes
+      end
+
       def run_test!(&block)
         if RSPEC_VERSION < 3
           ActiveSupport::Deprecation.warn('Rswag::Specs: WARNING: Support for RSpec 2.X will be dropped in v3.0')

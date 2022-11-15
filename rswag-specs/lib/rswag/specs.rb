@@ -2,6 +2,7 @@
 
 require 'rspec/core'
 require 'rswag/specs/example_group_helpers'
+require 'rswag/specs/oas3/example_group_helpers'
 require 'rswag/specs/example_helpers'
 require 'rswag/specs/configuration'
 require 'rswag/specs/railtie' if defined?(Rails::Railtie)
@@ -15,6 +16,7 @@ module Rswag
       c.add_setting :swagger_dry_run
       c.add_setting :swagger_format
       c.extend ExampleGroupHelpers, type: :request
+      c.extend Oas3::ExampleGroupHelpers, type: :request
       c.include ExampleHelpers, type: :request
     end
 

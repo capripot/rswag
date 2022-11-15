@@ -182,6 +182,70 @@ RSpec.describe 'Generated OpenApi', type: :request, swagger_doc: 'v3/openapi.jso
   end
 
   describe 'Request Body' do
+    path '/form_data' do
+      post 'body is required' do
+        tags 'Form data'
+
+        request_body_form(
+          schema: {
+            type: :object,
+            properties: {
+              name: {
+                type: :object,
+                properties: {
+                  title: {
+                    type: :string
+                  },
+                  content: {
+                    type: :string
+                  }
+                },
+                required: [:title]
+              },
+              phone: {
+                type: :string
+              }
+            },
+            required: [:blog]
+          }
+        )
+
+        response '200', 'OK' do
+          let(:title) { "A blog" }
+
+          run_test!
+
+          it 'declares requestBody' do
+            tree = swagger_doc.dig(:paths, "/form_data", :post, :requestBody, :content, "application/x-www-form-urlencoded")
+            expect(tree[:required]).to eq(true)
+            expect(tree[:schema]).to match(
+              {
+                type: :object,
+                properties: {
+                  name: {
+                    type: :object,
+                    properties: {
+                      title: {
+                        type: :string
+                      },
+                      content: {
+                        type: :string
+                      }
+                    },
+                    required: [:title]
+                  },
+                  phone: {
+                    type: :string
+                  }
+                },
+                required: [:blog]
+              }
+            )
+          end
+        end
+      end
+    end
+
     path '/stubs' do
       post 'body is required' do
         tags 'Media Types'

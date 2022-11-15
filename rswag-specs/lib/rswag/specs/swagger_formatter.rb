@@ -56,6 +56,7 @@ module Rswag
               v.each_pair do |_verb, value|
                 is_hash = value.is_a?(Hash)
                 if is_hash && value[:parameters]
+                  # Swagger 2
                   schema_param = value[:parameters]&.find { |p| (p[:in] == :body || p[:in] == :formData) && p[:schema] }
                   mime_list = value[:consumes] || doc[:consumes]
                   if value && schema_param && mime_list
